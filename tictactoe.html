@@ -16,14 +16,18 @@
             height: 100vh;
             margin: 0;
         }
-        #difficulty-screen, #game-screen {
+        #opponent-screen, #devices-screen, #lobby-screen, #difficulty-screen, #game-screen {
             text-align: center;
+            display: none;
         }
-        #difficulty-screen h1, #game-screen h1 {
+        #opponent-screen.active, #devices-screen.active, #lobby-screen.active, #difficulty-screen.active, #game-screen.active {
+            display: block;
+        }
+        h1 {
             font-size: 2.5em;
             margin-bottom: 20px;
         }
-        .difficulty-btn {
+        .btn {
             background-color: #4a4a4a;
             color: #e0e0e0;
             border: none;
@@ -34,8 +38,19 @@
             border-radius: 5px;
             transition: background-color 0.3s;
         }
-        .difficulty-btn:hover {
+        .btn:hover {
             background-color: #5e5e5e;
+        }
+        input {
+            background-color: #4a4a4a;
+            color: #e0e0e0;
+            border: none;
+            padding: 15px;
+            margin: 10px;
+            font-size: 1.2em;
+            border-radius: 5px;
+            width: 200px;
+            text-align: center;
         }
         #board {
             display: grid;
@@ -44,6 +59,7 @@
             background-color: #3a3a3a;
             padding: 10px;
             border-radius: 10px;
+            margin: 20px auto;
         }
         .cell {
             width: 100px;
@@ -78,80 +94,406 @@
         #restart:hover {
             background-color: #5e5e5e;
         }
+        .lobby-info {
+            margin: 10px 0;
+            font-size: 1.2em;
+        }
+        #games-settings {
+            margin: 20px 0;
+        }
     </style>
+    <!-- Firebase App (the core Firebase SDK) is always required and must be listed first -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <!-- Firebase Database -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
 <body>
+    <div id="opponent-screen" class="active">
+        <h1>Tic Tac Toe</h1>
+        <p>Wähle deinen Gegner:</p>
+        <button class="btn" onclick="selectOpponent('ai')">KI</button>
+        <button class="btn" onclick="selectOpponent('person')">Person</button>
+    </div>
+    
+    <div id="devices-screen">
+        <h1>Tic Tac Toe</h1>
+        <p>Wähle Geräteanzahl:</p>
+        <button class="btn" onclick="selectDevices(1)">1 Gerät</button>
+        <button class="btn" onclick="selectDevices(2)">2 Geräte</button>
+    </div>
+    
+    <div id="lobby-screen">
+        <h1>Tic Tac Toe</h1>
+        <div id="create-lobby">
+            <p>Erstelle einen Raum:</p>
+            <input type="text" id="lobby-code" placeholder="Raumcode eingeben" maxlength="6">
+            <div id="games-settings">
+                <p>Anzahl der Spiele:</p>
+                <select id="games-count">
+                    <option value="1">1 Spiel</option>
+                    <option value="3">3 Spiele</option>
+                    <option value="5">5 Spiele</option>
+                </select>
+            </div>
+            <button class="btn" onclick="createLobby()">Raum erstellen</button>
+        </div>
+        <div id="join-lobby" style="display:none;">
+            <p>Raum beitreten:</p>
+            <input type="text" id="join-code" placeholder="Raumcode eingeben" maxlength="6">
+            <button class="btn" onclick="joinLobby()">Beitreten</button>
+        </div>
+        <div id="waiting" style="display:none;">
+            <p class="lobby-info">Warte auf Gegner...</p>
+            <p class="lobby-info" id="lobby-code-display"></p>
+        </div>
+    </div>
+    
     <div id="difficulty-screen">
         <h1>Tic Tac Toe</h1>
         <p>Wähle einen Schwierigkeitsgrad:</p>
-        <button class="difficulty-btn" onclick="startGame('easy')">Easy</button>
-        <button class="difficulty-btn" onclick="startGame('normal')">Normal</button>
-        <button class="difficulty-btn" onclick="startGame('hard')">Hard</button>
+        <button class="btn" onclick="startGame('easy')">Easy</button>
+        <button class="btn" onclick="startGame('normal')">Normal</button>
+        <button class="btn" onclick="startGame('hard')">Hard</button>
     </div>
-    <div id="game-screen" style="display: none;">
+    
+    <div id="game-screen">
         <h1>Tic Tac Toe</h1>
+        <div id="multiplayer-info" style="display:none;">
+            <p class="lobby-info" id="player-role"></p>
+            <p class="lobby-info" id="score-display"></p>
+            <p class="lobby-info" id="game-count"></p>
+        </div>
         <div id="board"></div>
         <div id="status"></div>
         <button id="restart" onclick="restartGame()">Neustart</button>
     </div>
+
     <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCYBWU0IHCJjNAqkolKubG53LjJGFgXLHM",
+            authDomain: "cosmos-hs.firebaseapp.com",
+            databaseURL: "https://cosmos-hs-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "cosmos-hs",
+            storageBucket: "cosmos-hs.firebasestorage.app",
+            messagingSenderId: "377398562660",
+            appId: "1:377398562660:web:b27831050fd9eed3363471"
+        };
+        
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        
+        // Game state variables
         let currentPlayer = 'X';
         let board = ['', '', '', '', '', '', '', '', ''];
         let gameActive = true;
         let difficulty = 'easy';
-
+        let gameMode = ''; // 'ai', 'single-device', 'multiplayer'
+        let isMultiplayerHost = false;
+        let lobbyCode = '';
+        let totalGames = 1;
+        let currentGame = 1;
+        let scores = { X: 0, O: 0 };
+        let playerRole = ''; // For multiplayer: 'X' or 'O'
+        
         const winningCombinations = [
             [0, 1, 2], [3, 4, 5], [6, 7, 8],
             [0, 3, 6], [1, 4, 7], [2, 5, 8],
             [0, 4, 8], [2, 4, 6]
         ];
-
+        
+        // Screen navigation functions
+        function showScreen(screenId) {
+            document.querySelectorAll('div[id$="-screen"]').forEach(screen => {
+                screen.classList.remove('active');
+            });
+            document.getElementById(screenId).classList.add('active');
+        }
+        
+        function selectOpponent(opponent) {
+            if (opponent === 'ai') {
+                showScreen('difficulty-screen');
+            } else {
+                showScreen('devices-screen');
+            }
+        }
+        
+        function selectDevices(devices) {
+            if (devices === 1) {
+                gameMode = 'single-device';
+                showScreen('game-screen');
+                initializeBoard();
+                updateStatus();
+            } else {
+                gameMode = 'multiplayer';
+                showScreen('lobby-screen');
+                document.getElementById('create-lobby').style.display = 'block';
+                document.getElementById('join-lobby').style.display = 'none';
+                document.getElementById('waiting').style.display = 'none';
+            }
+        }
+        
+        function toggleLobbyMode() {
+            document.getElementById('create-lobby').style.display = 'none';
+            document.getElementById('join-lobby').style.display = 'block';
+        }
+        
+        // Multiplayer functions
+        function createLobby() {
+            lobbyCode = document.getElementById('lobby-code').value.trim().toUpperCase();
+            totalGames = parseInt(document.getElementById('games-count').value);
+            
+            if (!lobbyCode) {
+                alert('Bitte gib einen Raumcode ein.');
+                return;
+            }
+            
+            // Check if lobby already exists
+            database.ref('lobbies/' + lobbyCode).once('value').then(snapshot => {
+                if (snapshot.exists()) {
+                    alert('Dieser Raumcode ist bereits vergeben. Bitte wähle einen anderen.');
+                    return;
+                }
+                
+                // Create the lobby
+                isMultiplayerHost = true;
+                playerRole = 'X'; // Host is always X
+                
+                const lobbyData = {
+                    host: true,
+                    playerX: firebase.database.ServerValue.TIMESTAMP,
+                    playerO: null,
+                    board: ['', '', '', '', '', '', '', '', ''],
+                    currentPlayer: 'X',
+                    gameActive: true,
+                    totalGames: totalGames,
+                    currentGame: 1,
+                    scores: { X: 0, O: 0 }
+                };
+                
+                database.ref('lobbies/' + lobbyCode).set(lobbyData);
+                
+                // Show waiting screen
+                document.getElementById('create-lobby').style.display = 'none';
+                document.getElementById('waiting').style.display = 'block';
+                document.getElementById('lobby-code-display').textContent = 'Raumcode: ' + lobbyCode;
+                
+                // Listen for opponent joining
+                database.ref('lobbies/' + lobbyCode).on('value', handleLobbyUpdate);
+            });
+        }
+        
+        function joinLobby() {
+            lobbyCode = document.getElementById('join-code').value.trim().toUpperCase();
+            
+            if (!lobbyCode) {
+                alert('Bitte gib einen Raumcode ein.');
+                return;
+            }
+            
+            // Check if lobby exists
+            database.ref('lobbies/' + lobbyCode).once('value').then(snapshot => {
+                if (!snapshot.exists()) {
+                    alert('Dieser Raum existiert nicht. Bitte überprüfe den Code.');
+                    return;
+                }
+                
+                const lobbyData = snapshot.val();
+                
+                if (lobbyData.playerO !== null) {
+                    alert('Dieser Raum ist bereits voll.');
+                    return;
+                }
+                
+                // Join the lobby
+                isMultiplayerHost = false;
+                playerRole = 'O'; // Joiner is always O
+                totalGames = lobbyData.totalGames;
+                
+                database.ref('lobbies/' + lobbyCode).update({
+                    playerO: firebase.database.ServerValue.TIMESTAMP
+                });
+                
+                // Show waiting screen
+                document.getElementById('join-lobby').style.display = 'none';
+                document.getElementById('waiting').style.display = 'block';
+                document.getElementById('lobby-code-display').textContent = 'Raumcode: ' + lobbyCode;
+                
+                // Listen for game updates
+                database.ref('lobbies/' + lobbyCode).on('value', handleLobbyUpdate);
+            });
+        }
+        
+        function handleLobbyUpdate(snapshot) {
+            if (!snapshot.exists()) return;
+            
+            const lobbyData = snapshot.val();
+            
+            // Check if both players have joined
+            if (lobbyData.playerX && lobbyData.playerO && !lobbyData.gameStarted) {
+                database.ref('lobbies/' + lobbyCode).update({
+                    gameStarted: true
+                });
+            }
+            
+            // If game has started, initialize the board
+            if (lobbyData.gameStarted) {
+                showScreen('game-screen');
+                document.getElementById('multiplayer-info').style.display = 'block';
+                document.getElementById('player-role').textContent = 'Du spielst als: ' + playerRole;
+                updateScoreDisplay(lobbyData.scores, lobbyData.currentGame);
+                
+                // Initialize board with current state
+                board = [...lobbyData.board];
+                currentPlayer = lobbyData.currentPlayer;
+                gameActive = lobbyData.gameActive;
+                
+                renderBoard();
+                updateStatus();
+                
+                // If it's not our turn, disable board
+                if (currentPlayer !== playerRole) {
+                    document.querySelectorAll('.cell').forEach(cell => {
+                        cell.style.pointerEvents = 'none';
+                    });
+                } else {
+                    document.querySelectorAll('.cell').forEach(cell => {
+                        cell.style.pointerEvents = 'auto';
+                    });
+                }
+            }
+        }
+        
+        function updateScoreDisplay(scores, currentGame) {
+            document.getElementById('score-display').textContent = 
+                `Punktestand: X: ${scores.X} - O: ${scores.O}`;
+            document.getElementById('game-count').textContent = 
+                `Spiel ${currentGame} von ${totalGames}`;
+        }
+        
+        function makeMultiplayerMove(index) {
+            if (board[index] !== '' || !gameActive || currentPlayer !== playerRole) return;
+            
+            // Update local board
+            board[index] = currentPlayer;
+            
+            // Update Firebase
+            database.ref('lobbies/' + lobbyCode).update({
+                board: board,
+                currentPlayer: currentPlayer === 'X' ? 'O' : 'X'
+            });
+            
+            // Check for win or draw
+            if (checkWin()) {
+                const winner = currentPlayer;
+                const newScores = {...scores, [winner]: scores[winner] + 1};
+                
+                database.ref('lobbies/' + lobbyCode).update({
+                    gameActive: false,
+                    scores: newScores
+                });
+                
+                return;
+            }
+            
+            if (checkDraw()) {
+                database.ref('lobbies/' + lobbyCode).update({
+                    gameActive: false
+                });
+                
+                return;
+            }
+        }
+        
         function startGame(selectedDifficulty) {
             difficulty = selectedDifficulty;
-            document.getElementById('difficulty-screen').style.display = 'none';
-            document.getElementById('game-screen').style.display = 'block';
+            showScreen('game-screen');
             initializeBoard();
             updateStatus();
         }
-
+        
         function initializeBoard() {
             const boardElement = document.getElementById('board');
             boardElement.innerHTML = '';
             board = ['', '', '', '', '', '', '', '', ''];
             gameActive = true;
             currentPlayer = 'X';
+            
             for (let i = 0; i < 9; i++) {
                 const cell = document.createElement('div');
                 cell.classList.add('cell');
                 cell.setAttribute('data-index', i);
-                cell.addEventListener('click', () => handleCellClick(i));
+                
+                if (gameMode === 'single-device' || gameMode === 'ai') {
+                    cell.addEventListener('click', () => handleCellClick(i));
+                } else if (gameMode === 'multiplayer') {
+                    cell.addEventListener('click', () => makeMultiplayerMove(i));
+                }
+                
                 boardElement.appendChild(cell);
             }
+            
             updateStatus();
         }
-
+        
+        function renderBoard() {
+            const cells = document.querySelectorAll('.cell');
+            for (let i = 0; i < 9; i++) {
+                cells[i].textContent = board[i];
+            }
+        }
+        
         function handleCellClick(index) {
-            if (board[index] !== '' || !gameActive || currentPlayer !== 'X') return;
-            board[index] = currentPlayer;
-            document.querySelector(`[data-index="${index}"]`).textContent = currentPlayer;
-            if (checkWin()) {
-                document.getElementById('status').textContent = `${currentPlayer} gewinnt!`;
-                gameActive = false;
-                return;
+            if (board[index] !== '' || !gameActive) return;
+            
+            if (gameMode === 'single-device') {
+                // Single device - alternate players
+                board[index] = currentPlayer;
+                document.querySelector(`[data-index="${index}"]`).textContent = currentPlayer;
+                
+                if (checkWin()) {
+                    document.getElementById('status').textContent = `${currentPlayer} gewinnt!`;
+                    gameActive = false;
+                    return;
+                }
+                
+                if (checkDraw()) {
+                    document.getElementById('status').textContent = 'Unentschieden!';
+                    gameActive = false;
+                    return;
+                }
+                
+                currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+                updateStatus();
+            } 
+            else if (gameMode === 'ai' && currentPlayer === 'X') {
+                // AI mode - only human player (X) can click
+                board[index] = currentPlayer;
+                document.querySelector(`[data-index="${index}"]`).textContent = currentPlayer;
+                
+                if (checkWin()) {
+                    document.getElementById('status').textContent = `${currentPlayer} gewinnt!`;
+                    gameActive = false;
+                    return;
+                }
+                
+                if (checkDraw()) {
+                    document.getElementById('status').textContent = 'Unentschieden!';
+                    gameActive = false;
+                    return;
+                }
+                
+                currentPlayer = 'O';
+                updateStatus();
+                setTimeout(computerMove, 500);
             }
-            if (checkDraw()) {
-                document.getElementById('status').textContent = 'Unentschieden!';
-                gameActive = false;
-                return;
-            }
-            currentPlayer = 'O';
-            updateStatus();
-            setTimeout(computerMove, 500);
         }
-
+        
         function computerMove() {
             if (!gameActive) return;
             let move;
+            
             if (difficulty === 'easy') {
                 move = getRandomMove();
             } else if (difficulty === 'normal') {
@@ -159,22 +501,26 @@
             } else {
                 move = getBestMove();
             }
+            
             board[move] = 'O';
             document.querySelector(`[data-index="${move}"]`).textContent = 'O';
+            
             if (checkWin()) {
                 document.getElementById('status').textContent = 'O gewinnt!';
                 gameActive = false;
                 return;
             }
+            
             if (checkDraw()) {
                 document.getElementById('status').textContent = 'Unentschieden!';
                 gameActive = false;
                 return;
             }
+            
             currentPlayer = 'X';
             updateStatus();
         }
-
+        
         function getRandomMove() {
             const availableMoves = board.reduce((acc, cell, index) => {
                 if (cell === '') acc.push(index);
@@ -182,7 +528,7 @@
             }, []);
             return availableMoves[Math.floor(Math.random() * availableMoves.length)];
         }
-
+        
         function getNormalMove() {
             // Prüfe, ob der Computer gewinnen kann
             for (let combo of winningCombinations) {
@@ -203,10 +549,11 @@
             // Zufälliger Zug
             return getRandomMove();
         }
-
+        
         function getBestMove() {
             let bestScore = -Infinity;
             let move;
+            
             for (let i = 0; i < 9; i++) {
                 if (board[i] === '') {
                     board[i] = 'O';
@@ -218,14 +565,15 @@
                     }
                 }
             }
+            
             return move;
         }
-
+        
         function minimax(board, depth, isMaximizing) {
             if (checkWinFor('O')) return 10 - depth;
             if (checkWinFor('X')) return depth - 10;
             if (checkDraw()) return 0;
-
+            
             if (isMaximizing) {
                 let bestScore = -Infinity;
                 for (let i = 0; i < 9; i++) {
@@ -250,28 +598,37 @@
                 return bestScore;
             }
         }
-
+        
         function checkWin() {
             return checkWinFor(currentPlayer);
         }
-
+        
         function checkWinFor(player) {
             return winningCombinations.some(combo => {
                 return combo.every(index => board[index] === player);
             });
         }
-
+        
         function checkDraw() {
             return board.every(cell => cell !== '');
         }
-
+        
         function updateStatus() {
-            document.getElementById('status').textContent = gameActive ? `Spieler ${currentPlayer} ist am Zug` : document.getElementById('status').textContent;
+            if (gameActive) {
+                document.getElementById('status').textContent = `Spieler ${currentPlayer} ist am Zug`;
+            }
         }
-
+        
         function restartGame() {
-            document.getElementById('difficulty-screen').style.display = 'block';
-            document.getElementById('game-screen').style.display = 'none';
+            if (gameMode === 'multiplayer') {
+                // Leave the multiplayer lobby
+                database.ref('lobbies/' + lobbyCode).off('value');
+                if (isMultiplayerHost) {
+                    database.ref('lobbies/' + lobbyCode).remove();
+                }
+            }
+            
+            showScreen('opponent-screen');
         }
     </script>
 </body>
